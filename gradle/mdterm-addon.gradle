@@ -1,0 +1,43 @@
+// Preserve all upstream SDK, branding, dependency and optimization settings.
+def requiredEnvironment = { String name ->
+    def value = System.getenv(name)
+    if (value == null || value.isEmpty()) {
+        throw new GradleException("Missing required environment variable: " + name)
+    }
+    value
+}
+
+def selectedStore = new File(requiredEnvironment("MDTERM_ADDON_STORE_FILE"))
+if (!selectedStore.isAbsolute() || !selectedStore.isFile()) {
+    throw new GradleException("MDTERM_ADDON_STORE_FILE must name an existing absolute keystore path")
+}
+def selectedStorePassword = requiredEnvironment("MDTERM_ADDON_STORE_PASSWORD")
+def selectedKeyAlias = requiredEnvironment("MDTERM_ADDON_KEY_ALIAS")
+def selectedKeyPassword = requiredEnvironment("MDTERM_ADDON_KEY_PASSWORD")
+
+if (android.defaultConfig.applicationId != mdtermAddonApplicationId ||
+        android.namespace != mdtermAddonApplicationId) {
+    throw new GradleException("Upstream applicationId or namespace does not match sources.lock.json")
+}
+
+android {
+    signingConfigs {
+        mdtermAddon {
+            storeFile selectedStore
+            storePassword selectedStorePassword
+            keyAlias selectedKeyAlias
+            keyPassword selectedKeyPassword
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.mdtermAddon
+        }
+    }
+    // Only the release variant is available through the MDTermaddon overlay.
+    variantFilter { variant ->
+        if (variant.buildType.name != "release") {
+            variant.setIgnore(true)
+        }
+    }
+}

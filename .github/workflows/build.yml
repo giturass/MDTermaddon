@@ -1,0 +1,115 @@
+name: Build MDTerm addons (Release)
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: addons-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Check build tooling
+        run: |
+          python3 -m unittest discover -s tests -v
+          bash -n scripts/build.sh
+          shellcheck scripts/build.sh
+
+  build:
+    if: github.event_name != 'pull_request'
+    needs: checks
+    name: ${{ matrix.addon }} Release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        addon: [api, boot, styling]
+    env:
+      ADDON_ID: ${{ matrix.addon }}
+    steps:
+      - name: Checkout MDTermaddon
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Read locked upstream source
+        id: source
+        run: python3 scripts/source.py "$ADDON_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout upstream at the locked commit
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ steps.source.outputs.repository }}
+          ref: ${{ steps.source.outputs.commit }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-${{ steps.source.outputs.compile_sdk }} build-tools;34.0.0'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build and verify with the MDTerm signing key
+        env:
+          MDTERM_RELEASE_KEYSTORE_BASE64: ${{ secrets.MDTERM_RELEASE_KEYSTORE_BASE64 }}
+          MDTERM_RELEASE_STORE_PASSWORD: ${{ secrets.MDTERM_RELEASE_STORE_PASSWORD }}
+          MDTERM_RELEASE_KEY_ALIAS: ${{ secrets.MDTERM_RELEASE_KEY_ALIAS }}
+          MDTERM_RELEASE_KEY_PASSWORD: ${{ secrets.MDTERM_RELEASE_KEY_PASSWORD }}
+          MDTERM_RELEASE_CERT_SHA256: ${{ vars.MDTERM_RELEASE_CERT_SHA256 }}
+        run: bash scripts/build.sh "$ADDON_ID"
+
+      - name: Upload verified APK, source and checksums
+        uses: actions/upload-artifact@v6
+        with:
+          name: MDTerm-${{ matrix.addon }}-release-${{ github.sha }}
+          if-no-files-found: error
+          compression-level: 0
+          path: dist/*
+
+  release:
+    name: Publish tagged release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: MDTerm-*-release-*
+          path: dist
+          merge-multiple: true
+      - name: Publish all three verified addons
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" \
+              --target "$SOURCE_SHA" --title "MDTermaddon $RELEASE_TAG" --generate-notes
+          fi

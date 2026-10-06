@@ -1,0 +1,35 @@
+{
+  "mdterm": {
+    "repository": "giturass/MDTerm",
+    "commit": "2c2da4728ff68f00809fcf9c1fd510bd4abd7c6b",
+    "package": "com.termux",
+    "shared_user_id": "com.termux"
+  },
+  "addons": {
+    "api": {
+      "repository": "termux/termux-api",
+      "commit": "6c8eaa223bcc387e6b28146d340acb20712aa3e7",
+      "version": "0.53.0",
+      "application_id": "com.termux.api",
+      "compile_sdk": 35,
+      "min_sdk": 24,
+      "termux_shared_commit": "7bceab88e2272f961d1b94ef736f1a9e20173247"
+    },
+    "boot": {
+      "repository": "termux/termux-boot",
+      "commit": "613dc9893f672313e2c572c0089ece7475e04f5b",
+      "version": "0.8.1",
+      "application_id": "com.termux.boot",
+      "compile_sdk": 34,
+      "min_sdk": 21
+    },
+    "styling": {
+      "repository": "termux/termux-styling",
+      "commit": "82dcd3243349d1c5de9a9055b429331d1a01b388",
+      "version": "0.32.1",
+      "application_id": "com.termux.styling",
+      "compile_sdk": 34,
+      "min_sdk": 21
+    }
+  }
+}

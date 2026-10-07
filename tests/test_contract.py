@@ -5,13 +5,14 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from signing import key_bytes
 from source import load_lock
-from verify_apk import validate_certificate, validate_manifest
+from verify_apk import find_apk, validate_certificate, validate_manifest, validate_native_libraries
 
 
 class CompatibilityTests(unittest.TestCase):
@@ -30,7 +31,43 @@ class CompatibilityTests(unittest.TestCase):
                 self.assertEqual(addon["application_id"], "com.termux." + name)
                 xml = self.xml.replace("com.termux.api", addon["application_id"])
                 xml = xml.replace('minSdkVersion="24"', f'minSdkVersion="{addon["min_sdk"]}"')
+                if addon.get("flavor") == "sharedUid":
+                    xml = xml.replace("<application ", '<application android:process="com.termux" ')
                 validate_manifest(xml, addon, "com.termux")
+
+    def x11_manifest(self):
+        return self.xml.replace("com.termux.api", "com.termux.x11").replace(
+            '<application android:debuggable="false"/>',
+            '<application android:debuggable="false" android:process="com.termux">'
+            '<activity android:name=".MainActivity"/>'
+            '<service android:name=".ServerService" android:process="com.termux"/>'
+            '</application>')
+
+    def test_x11_shared_uid_process_can_be_inherited_or_explicit(self):
+        validate_manifest(self.x11_manifest(), self.lock["addons"]["x11"], "com.termux")
+
+    def test_x11_rejects_standalone_identity_and_sdk(self):
+        xml = self.x11_manifest()
+        for invalid, message in (
+            (xml.replace('android:sharedUserId="com.termux"', ""), "sharedUserId"),
+            (xml.replace('targetSdkVersion="28"', 'targetSdkVersion="34"'), "target SDK"),
+        ):
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                validate_manifest(invalid, self.lock["addons"]["x11"], "com.termux")
+
+    def test_x11_rejects_missing_or_isolated_application_process(self):
+        for process in ("", 'android:process=":x11"', 'android:process="com.termux.x11"'):
+            xml = self.x11_manifest().replace('android:process="com.termux"', process, 1)
+            with self.subTest(process=process), self.assertRaisesRegex(ValueError, "application.*com.termux"):
+                validate_manifest(xml, self.lock["addons"]["x11"], "com.termux")
+
+    def test_x11_rejects_components_outside_shared_process(self):
+        for component in ("activity", "activity-alias", "service", "receiver", "provider"):
+            xml = self.x11_manifest().replace(
+                "</application>",
+                f'<{component} android:name=".Isolated" android:process=":isolated"/></application>')
+            with self.subTest(component=component), self.assertRaisesRegex(ValueError, "components.*com.termux"):
+                validate_manifest(xml, self.lock["addons"]["x11"], "com.termux")
 
     def test_reject_renamed_package(self):
         with self.assertRaisesRegex(ValueError, "package"):
@@ -84,6 +121,87 @@ class CompatibilityTests(unittest.TestCase):
         result = subprocess.run(["bash", str(script), "api"], env=environment, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("MDTERM_RELEASE_KEYSTORE_BASE64", result.stderr)
+
+
+class NativeLibraryTests(unittest.TestCase):
+    def setUp(self):
+        self.lock = load_lock()
+        self.addon = self.lock["addons"]["x11"]
+        self.libraries = [f"lib/{abi}/libXlorie.so" for abi in self.addon["native_abis"]]
+
+    def test_x11_accepts_all_four_native_abis(self):
+        validate_native_libraries(["classes.dex", *self.libraries], self.addon)
+
+    def test_x11_rejects_missing_or_extra_abis(self):
+        for libraries in ([], self.libraries[:-1], self.libraries + ["lib/mips/libXlorie.so"]):
+            with self.subTest(libraries=libraries), self.assertRaisesRegex(ValueError, "native ABIs"):
+                validate_native_libraries(libraries, self.addon)
+
+    def test_x11_requires_its_native_library_for_each_abi(self):
+        for index, library in enumerate(self.libraries):
+            libraries = self.libraries.copy()
+            libraries[index] = library.replace("libXlorie.so", "libunrelated.so")
+            with self.subTest(library=library), self.assertRaisesRegex(ValueError, "Missing X11 native library"):
+                validate_native_libraries(libraries, self.addon)
+
+    def test_x11_rejects_malformed_native_library_paths(self):
+        with self.assertRaisesRegex(ValueError, "native library path"):
+            validate_native_libraries(self.libraries + ["lib/arm64-v8a/nested/libXlorie.so"], self.addon)
+
+    def test_other_addons_continue_to_reject_native_libraries(self):
+        for name in ("api", "boot", "styling", "tasker"):
+            with self.subTest(addon=name):
+                addon = self.lock["addons"][name]
+                validate_native_libraries(["classes.dex"], addon)
+                with self.assertRaisesRegex(ValueError, "Unexpected native library"):
+                    validate_native_libraries(self.libraries, addon)
+
+
+class ApkSelectionTests(unittest.TestCase):
+    def setUp(self):
+        temporary_root = Path(os.environ.get("TMPDIR", Path.home() / "tmp"))
+        temporary_root.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(prefix="mdtermaddon-apk-", dir=temporary_root)
+        self.addCleanup(temporary.cleanup)
+        self.source = Path(temporary.name)
+        self.lock = load_lock()
+
+    def output(self, relative):
+        path = self.source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"APK fixture")
+        return path
+
+    def test_x11_selects_only_shared_uid_release_output(self):
+        expected = self.output("lorie-app/build/outputs/apk/sharedUid/release/lorie-app-sharedUid-release.apk")
+        for relative in (
+            "lorie-app/build/outputs/apk/standalone/release/lorie-app-standalone-release.apk",
+            "lorie-app/build/outputs/apk/sharedUid/debug/lorie-app-sharedUid-debug.apk",
+            "app/build/outputs/apk/release/app-release.apk",
+        ):
+            self.output(relative)
+        self.assertEqual(find_apk(self.source, self.lock["addons"]["x11"]), expected)
+
+    def test_x11_rejects_only_standalone_or_debug_outputs(self):
+        for relative in (
+            "lorie-app/build/outputs/apk/standalone/release/lorie-app-standalone-release.apk",
+            "lorie-app/build/outputs/apk/sharedUid/debug/lorie-app-sharedUid-debug.apk",
+        ):
+            path = self.output(relative)
+            with self.subTest(output=relative), self.assertRaisesRegex(ValueError, "exactly one release APK.*found 0"):
+                find_apk(self.source, self.lock["addons"]["x11"])
+            path.unlink()
+
+    def test_x11_rejects_ambiguous_shared_uid_release_outputs(self):
+        self.output("lorie-app/build/outputs/apk/sharedUid/release/first.apk")
+        self.output("lorie-app/build/outputs/apk/sharedUid/release/second.apk")
+        with self.assertRaisesRegex(ValueError, "exactly one release APK.*found 2"):
+            find_apk(self.source, self.lock["addons"]["x11"])
+
+    def test_tasker_uses_the_standard_app_release_directory(self):
+        expected = self.output("app/build/outputs/apk/release/app-release.apk")
+        self.output("app/build/outputs/apk/debug/app-debug.apk")
+        self.assertEqual(find_apk(self.source, self.lock["addons"]["tasker"]), expected)
 
 
 if __name__ == "__main__":

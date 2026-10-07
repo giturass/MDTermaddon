@@ -32,11 +32,11 @@ jobs:
     needs: checks
     name: ${{ matrix.addon }} Release APK
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        addon: [api, boot, styling]
+        addon: [api, boot, styling, tasker, x11]
     env:
       ADDON_ID: ${{ matrix.addon }}
     steps:
@@ -55,6 +55,7 @@ jobs:
           repository: ${{ steps.source.outputs.repository }}
           ref: ${{ steps.source.outputs.commit }}
           path: upstream
+          submodules: recursive
           persist-credentials: false
 
       - name: Set up Java 17
@@ -70,6 +71,16 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
+
+      - name: Install X11 native build tools
+        if: matrix.addon == 'x11'
+        env:
+          X11_NDK_VERSION: ${{ steps.source.outputs.ndk_version }}
+          X11_CMAKE_VERSION: ${{ steps.source.outputs.cmake_version }}
+        run: |
+          sdkmanager "ndk;$X11_NDK_VERSION" "cmake;$X11_CMAKE_VERSION"
+          command -v bison
+          command -v patch
 
       - name: Build and verify with the MDTerm signing key
         env:
@@ -101,7 +112,7 @@ jobs:
           pattern: MDTerm-*-release-*
           path: dist
           merge-multiple: true
-      - name: Publish all three verified addons
+      - name: Publish all five verified addons
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}

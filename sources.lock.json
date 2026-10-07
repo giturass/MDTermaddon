@@ -30,6 +30,31 @@
       "application_id": "com.termux.styling",
       "compile_sdk": 34,
       "min_sdk": 21
+    },
+    "tasker": {
+      "repository": "termux/termux-tasker",
+      "commit": "f08f83b5830c1273916d96d1ebcc70e14e520f1b",
+      "version": "0.9.0",
+      "application_id": "com.termux.tasker",
+      "compile_sdk": 35,
+      "min_sdk": 21,
+      "termux_shared_commit": "7bceab88e2272f961d1b94ef736f1a9e20173247"
+    },
+    "x11": {
+      "repository": "termux/termux-x11",
+      "commit": "fa3a8b430e2896a19f44c99a9cb056254615ae06",
+      "version": "1.03.01-fa3a8b4",
+      "application_id": "com.termux.x11",
+      "namespace": "com.termux.x11.app",
+      "compile_sdk": 34,
+      "min_sdk": 24,
+      "module": "lorie-app",
+      "flavor": "sharedUid",
+      "ndk_version": "29.0.14206865",
+      "cmake_version": "3.22.1",
+      "native_abis": ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"],
+      "native_library": "libXlorie.so",
+      "companion_version": "1.03.01"
     }
   }
 }

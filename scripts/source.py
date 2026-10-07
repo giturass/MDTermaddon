@@ -14,7 +14,7 @@ def load_lock():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("addon", choices=("api", "boot", "styling"))
+    parser.add_argument("addon", choices=load_lock()["addons"])
     args = parser.parse_args()
     for key, value in load_lock()["addons"][args.addon].items():
         if "\n" in str(value) or "\r" in str(value):

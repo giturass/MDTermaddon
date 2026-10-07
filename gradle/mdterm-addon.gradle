@@ -16,7 +16,7 @@ def selectedKeyAlias = requiredEnvironment("MDTERM_ADDON_KEY_ALIAS")
 def selectedKeyPassword = requiredEnvironment("MDTERM_ADDON_KEY_PASSWORD")
 
 if (android.defaultConfig.applicationId != mdtermAddonApplicationId ||
-        android.namespace != mdtermAddonApplicationId) {
+        android.namespace != mdtermAddonNamespace) {
     throw new GradleException("Upstream applicationId or namespace does not match sources.lock.json")
 }
 
@@ -34,10 +34,14 @@ android {
             signingConfig signingConfigs.mdtermAddon
         }
     }
-    // Only the release variant is available through the MDTermaddon overlay.
-    variantFilter { variant ->
-        if (variant.buildType.name != "release") {
-            variant.setIgnore(true)
-        }
+}
+
+// Supported by both AGP 8 and 9. X11 exposes only sharedUidRelease.
+androidComponents {
+    beforeVariants(selector().all()) { variant ->
+        variant.enable = variant.buildType == 'release' &&
+                (mdtermAddonFlavor.isEmpty() || variant.productFlavors.any {
+                    it.second == mdtermAddonFlavor
+                })
     }
 }

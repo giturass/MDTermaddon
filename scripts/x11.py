@@ -47,6 +47,12 @@ def prepare_companion(original):
         "androidComponents { beforeVariants(selector().withBuildType('debug')) { it.enable = false } }")
     loader = replace_once(loader, 'it.outputFileName.set("shell-loader-debug.apk")',
                           'it.outputFileName.set("shell-loader-release.apk")')
+    # The Java-only loader does not need Kotlin in its APK, but release Lint
+    # does need Kotlin on its own tool classpath. A global exclusion breaks it.
+    loader = replace_once(loader,
+        'configurations.configureEach { exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib" }',
+        "configurations.matching { it.name in ['releaseCompileClasspath', 'releaseRuntimeClasspath'] }"
+        '.configureEach { exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib" }')
     # This message is shown when the paired app is missing. Upstream nightly APKs
     # carry a different certificate and cannot be used with this companion.
     start = 'android.defaultConfig.buildConfigField "String", "packageNotInstalledErrorText",'
